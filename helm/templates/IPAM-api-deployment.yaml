@@ -1,0 +1,325 @@
+###############################################################################
+# Licensed Materials - Property of IBM.
+# Copyright IBM Corporation 2017. All Rights Reserved.
+# U.S. Government Users Restricted Rights - Use, duplication or disclosure
+# restricted by GSA ADP Schedule Contract with IBM Corp.
+#
+# Contributors:
+#  IBM Corporation - initial API and implementation
+###############################################################################
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ipam-api
+  labels:
+    name: ipam-api
+    app: {{ template "fullname" . }}
+    chart: "{{ .Chart.Name }}-{{ .Chart.Version }}"
+    release: "{{ .Release.Name }}"
+    heritage: "{{ .Release.Service }}"
+  namespace: {{ .Values.service.namespace }}
+spec:
+  replicas: {{ .Values.ipamAPI.replicaCount }}
+  selector:
+    matchLabels:
+      name: ipam-api
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 1
+  revisionHistoryLimit: 3
+  template:
+    metadata:
+      labels:
+        name: ipam-api
+        app: {{ template "fullname" . }}
+        chart: "{{ .Chart.Name }}-{{ .Chart.Version }}"
+        release: "{{ .Release.Name }}"
+        heritage: "{{ .Release.Service }}"
+      annotations:
+        productName: "IBM IPAM"
+        productID: "{{ .Values.global.id.productID }}"
+        productVersion: "{{ .Chart.AppVersion }}"
+    spec:
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+            - matchExpressions:
+              - key: beta.kubernetes.io/arch
+                operator: In
+                values:
+                - {{ .Values.arch }}
+      hostname: ipam-api
+      volumes:
+      - name: ipam-cert
+        secret: 
+          secretName: {{ .Values.ipamAPI.certificate.certName }}
+      - name:  {{ .Values.camLogsPV.name }}
+      {{- if .Values.global.image.secretName }}
+      {{- if ne .Values.global.image.secretName "default"}}
+      imagePullSecrets:
+      - name: {{ .Values.global.image.secretName }}
+      {{- end }}
+      {{- end }}
+      containers:
+      - name: ipam-api
+        image: "{{ .Values.image.repository }}iipam-api:{{ .Values.image.tag }}{{ template "platform" . }}"
+        imagePullPolicy: {{ .Values.image.pullPolicy }}
+        ports:
+        - name: liveness-port
+          containerPort: 4000
+        livenessProbe:
+          httpGet:
+            path: /api/v1/health
+            port: liveness-port
+            scheme: HTTPS
+          initialDelaySeconds: 300
+          periodSeconds: 20
+        readinessProbe:
+          httpGet:
+            path: /api/v1/ready
+            port: liveness-port
+            scheme: HTTPS
+          initialDelaySeconds: 5
+          periodSeconds: 20
+        resources:
+{{ toYaml .Values.resources | indent 10 }}
+        volumeMounts:
+          - name: cam-cert
+            mountPath: {{ .Values.ipamAPI.certificate.certPath }}
+            readOnly: true
+          - name:  {{ .Values.camLogsPV.name }}
+            mountPath: /var/camlog
+            subPath: ipam-api
+{{- if .Values.global.audit }}
+          - name: shared
+            mountPath: /var/audit
+{{- end }}
+        envFrom:
+        - configMapRef:
+            name: common-config
+        - configMapRef:
+            name: redis-config
+        env:
+        - name: MONGODB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              {{- if .Values.secureValues.secretName }}
+              name: {{ .Values.secureValues.secretName }}
+              {{- else }}
+              name: cam-secure-values-secret
+              {{- end }}
+              key: mongoDbPassword
+        - name: DB_URL
+          valueFrom:
+            secretKeyRef:
+              {{- if .Values.secureValues.secretName }}
+              name: {{ .Values.secureValues.secretName }}
+              {{- else }}
+              name: cam-secure-values-secret
+              {{- end }}
+              key: mongoDbUrl
+        - name: CIPHER_PWD
+          valueFrom:
+            secretKeyRef:
+              {{- if .Values.secureValues.secretName }}
+              name: {{ .Values.secureValues.secretName }}
+              {{- else }}
+              name: cam-secure-values-secret
+              {{- end }}
+              key: encryptionPassword
+        - name: CIPHER_PWD_NEW
+          valueFrom:
+            secretKeyRef:
+              name: cam-cipher-migration-secret
+              key: newpassword
+        - name: CIPHER_MIGRATION_TIMESTAMP_FILE
+          valueFrom:
+            secretKeyRef:
+              name: cam-cipher-migration-secret
+              key: timestampfile
+        - name: CAM_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: {{ .Values.ipamAPI.camSecret.secretName }}
+              key: token
+        - name: ICP_MASTER_IP
+          valueFrom:
+            configMapKeyRef:
+              name: oauth-client-map
+              key: MASTER_IP
+        - name: ICP_ENDPOINT
+          value: https://$(ICP_MASTER_IP):8443
+        - name: ORPHEUS_IDENTITY_API_URL
+          value: $(ICP_ENDPOINT)/idprovider
+        - name: ORPHEUS_IDENTITY_URL
+          value: $(ICP_ENDPOINT)/idprovider
+        - name: PLUGIN_ENDPOINTURL_plugin_terraform
+          value: https://cam-provider-terraform:7000/api
+        - name: PLUGIN_ENDPOINTURL_plugin_helm
+          value: https://cam-provider-helm:7010/api
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: POD_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        - name: LOG_LEVEL
+          value: {{ .Values.camLoggingPolicies.logLevel }}
+        - name: WLP_CLIENT_ID
+          valueFrom:
+            secretKeyRef:
+              name: {{ .Values.ipamAPI.camSecret.secretName }}
+              key: wlp_client_id
+        - name: WLP_CLIENT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: {{ .Values.ipamAPI.camSecret.secretName }}
+              key: wlp_client_secret
+        - name: IAM_DEPLOY_API_KEY
+          value: {{ .Values.global.iam.deployApiKey }}
+        - name: ICP_PROXY_IP
+          valueFrom:
+            configMapKeyRef:
+              name: oauth-client-map
+              key: PROXY_IP
+        - name: ICP_CLUSTER_CA_DOMAIN
+          valueFrom:
+            configMapKeyRef:
+              name: oauth-client-map
+              key: CLUSTER_CA_DOMAIN
+        - name: ICP_WLP_CLIENT_REGISTRATION_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: oauth-client-secret
+              key: WLP_CLIENT_REGISTRATION_SECRET
+        - name: ICP_DEFAULT_ADMIN_USER
+          valueFrom:
+            secretKeyRef:
+              name: oauth-client-secret
+              key: DEFAULT_ADMIN_USER
+        - name: AUDIT_ENABLED
+          value: "{{ .Values.global.audit }}"
+        - name: AUDIT_LOG_PATH
+          value: /var/audit/ipam-api-audit.log
+        - name: SERVICE_NAME
+          value: ipam-api
+{{- if .Values.proxy.useProxy }}
+        - name: HTTPS_PROXY
+          valueFrom:
+            secretKeyRef:
+              {{- if .Values.secureValues.secretName }}
+              name: {{ .Values.secureValues.secretName }}
+              {{- else }}
+              name: cam-secure-values-secret
+              {{- end }}
+              key: httpsProxy          
+        - name: https_proxy
+          valueFrom:
+            secretKeyRef:
+              {{- if .Values.secureValues.secretName }}
+              name: {{ .Values.secureValues.secretName }}
+              {{- else }}
+              name: cam-secure-values-secret
+              {{- end }}
+              key: httpsProxy  
+        - name: HTTP_PROXY
+          valueFrom:
+            secretKeyRef:
+              {{- if .Values.secureValues.secretName }}
+              name: {{ .Values.secureValues.secretName }}
+              {{- else }}
+              name: cam-secure-values-secret
+              {{- end }}
+              key: httpProxy  
+        - name: http_proxy
+          valueFrom:
+            secretKeyRef:
+              {{- if .Values.secureValues.secretName }}
+              name: {{ .Values.secureValues.secretName }}
+              {{- else }}
+              name: cam-secure-values-secret
+              {{- end }}
+              key: httpProxy  
+        - name: NO_PROXY
+          valueFrom:
+            secretKeyRef:
+              {{- if .Values.secureValues.secretName }}
+              name: {{ .Values.secureValues.secretName }}
+              {{- else }}
+              name: cam-secure-values-secret
+              {{- end }}
+              key: noProxy  
+        - name: no_proxy
+          valueFrom:
+            secretKeyRef:
+              {{- if .Values.secureValues.secretName }}
+              name: {{ .Values.secureValues.secretName }}
+              {{- else }}
+              name: cam-secure-values-secret
+              {{- end }}
+              key: noProxy  
+{{- end }}
+        - name: CAM_OFFLINE
+          value: "{{ .Values.global.offline }}"
+{{- if .Values.global.audit }}
+      - name: ipam-api-audit
+        image: "{{ .Values.auditService.image.repository }}icp-audit-service:{{ .Values.auditService.image.tag }}"
+        imagePullPolicy: {{ .Values.auditService.image.pullPolicy }}
+        resources:
+{{ toYaml .Values.auditService.resources | indent 10 }}
+        env:
+          - name: POD_NAME
+            valueFrom:
+              fieldRef:
+                fieldPath: metadata.name
+          - name: LOG_LEVEL
+            value: {{ .Values.camLoggingPolicies.logLevel }}
+        volumeMounts:
+          - name:  {{ .Values.camLogsPV.name }}
+            mountPath: /var/camlog
+            subPath: ipam-api
+          - name: shared
+            mountPath: "/var/log/audit"
+          - name: journal
+            mountPath: {{ .Values.auditService.config.journalPath }}
+          - name: logrotate
+            mountPath: "/etc/logrotate.d/audit"
+            subPath: audit
+          - name: logrotate-conf
+            mountPath: "/etc/logrotate.conf"            
+            subPath: logrotate.conf
+        livenessProbe:
+          exec:
+            command:
+            - sh
+            - -c
+            - "service cron status"
+          initialDelaySeconds: 30
+          timeoutSeconds: 5
+        readinessProbe:
+          exec:
+            command:
+            - sh
+            - -c
+            - "service cron status"
+          initialDelaySeconds: 5
+          timeoutSeconds: 1
+{{- end }}
+      initContainers:
+      - name: ipam-api-init
+        image: "{{ .Values.image.repository }}icam-busybox:{{ .Values.image.tag }}{{ template "platform" . }}"
+        imagePullPolicy:  {{ .Values.image.pullPolicy }}
+        securityContext:
+          runAsUser: 0
+        command: ["/bin/sh", "-c"]
+        args:
+          - mkdir -p /var/camlog/ipam-api && chown -R 1000:1000 /var/camlog/ipam-api;
+        volumeMounts:
+        - name: {{ .Values.camLogsPV.name }}
+          mountPath: /var/camlog

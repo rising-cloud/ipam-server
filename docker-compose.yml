@@ -1,0 +1,42 @@
+version: "2"
+services:
+  ipam-server:
+    container_name: ipam-server
+    build: ./ipam-server
+    image: ipam-server
+    links:
+      - ipam-mongo
+    networks:
+      - ipam-network
+    expose:
+      - "40000"
+    ports:
+      - "40000:40000"
+    volumes:
+      - ./ipam-server:/usr/src/app
+
+  ipam-ui:
+    container_name: ipam-ui
+    build: ./ipam-ui
+    image: ipam-ui
+    networks:
+      - ipam-network
+    expose:
+      - "42000"
+    ports:
+      - "42000:42000"
+    volumes:
+      - ./ipam-ui:/usr/src/app
+    links:
+      - ipam-server
+  ipam-mongo:
+    container_name: ipam-mongo
+    image: mongo
+    ports:
+      -  "41000:27017"
+    networks:
+      - ipam-network
+
+networks:
+    ipam-network:
+        driver: bridge
