@@ -9,7 +9,7 @@
 ## Using docker-compose.yml
 
 - Copy `docker-compose.yml` into a separate folder or `../docker-compose.yml`
-- Clone the repos `https://github.ibm.com/Orpheus/ipam-server` and `https://github.ibm.com/Orpheus/ipam-ui` in the same folder as `docker-compose.yml`
+- Clone the repos `https://github.com/rising-cloud/ipam-server` and `https://github.com/rising-cloud/ipam-ui` in the same folder as `docker-compose.yml`
 - Run `docker-compose up -d`
 
 ##  Currently functional 
